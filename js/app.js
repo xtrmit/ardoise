@@ -113,7 +113,9 @@ $('#toastUndo').onclick = () => { const f = undoFn; undoFn = null; $('#toast').c
 let sheetOpen = false, onSheetClose = null;
 function openSheet(html, opts) {
   opts = opts || {};
-  $('#sheet').innerHTML = '<div class="grab"></div>' + html;
+  $('#sheet').innerHTML = '<div class="grab"></div>' + (opts.noClose ? '' : `<button class="sheet-x" data-close aria-label="Fermer">${ico('x')}</button>`) + html;
+  $('#sheet').dataset.noclose = opts.noClose ? '1' : '';
+  $('#sheet').scrollTop = 0;
   $('#sheet').onclick = null; $('#sheet').onchange = null;
   $('#sheet').classList.add('on'); $('#backdrop').classList.add('on');
   $('#backdrop').dataset.lock = opts.lock ? '1' : '';
@@ -135,6 +137,26 @@ function closeSheet(silent) {
 }
 window.addEventListener('popstate', () => { if (sheetOpen) hideSheet(); });
 $('#backdrop').onclick = () => { if (!$('#backdrop').dataset.lock) closeSheet(); };
+$('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) { e.stopImmediatePropagation(); closeSheet(); } }, true);
+/* Glisser la feuille vers le bas pour la fermer */
+(function () {
+  const sh = $('#sheet'); let g = null;
+  sh.addEventListener('touchstart', e => {
+    if (sh.dataset.noclose || sh.scrollTop > 0 || e.target.closest('input,textarea,select')) { g = null; return; }
+    g = { y: e.touches[0].clientY, dy: 0 };
+  }, { passive: true });
+  sh.addEventListener('touchmove', e => {
+    if (!g) return;
+    const dy = e.touches[0].clientY - g.y;
+    if (dy <= 0 || sh.scrollTop > 0) { if (g.dy) { sh.style.transform = ''; g.dy = 0; } if (dy < -6) g = null; return; }
+    e.preventDefault(); g.dy = dy; sh.style.transition = 'none'; sh.style.transform = `translateY(${dy}px)`;
+  }, { passive: false });
+  sh.addEventListener('touchend', () => {
+    if (!g) return; const fermer = g.dy > 90; g = null;
+    sh.style.transition = ''; sh.style.transform = '';
+    if (fermer) closeSheet();
+  });
+})();
 
 /* ================== Gestes sur les cartes ================== */
 let pressT, pressEl, longDone, startX, startY;
@@ -168,7 +190,7 @@ function openActions(id) {
   const n = N.find(x => x.id === id); if (!n) return;
   openSheet(`<h3>${esc(n.resume)}</h3><div class="sub">${(TYPES[n.type] || TYPES.tache).label} · ${nice(n.date)} · ${MOMENTS[n.moment] || 'Journée'}${n.heure ? ' · ' + St.heureFr(n.heure) : ''}${n.personne ? ' · ' + esc(n.personne) : ''}</div>
     <button class="act" data-a="edit">${ico('edit')}Modifier</button>
-    <button class="act" data-a="tomorrow">${ico('next')}Reporter à demain</button>
+    ${n.date < St.addDays(jour, 1) ? `<button class="act" data-a="tomorrow">${ico('next')}Reporter à demain</button>` : ''}
     <button class="act" data-a="pick">${ico('cal')}Choisir une date</button>
     <div id="pickRow" style="display:none;padding:4px 6px 10px"><input type="date" class="txt" id="pickDate" value="${n.date}" min="${jour}"></div>
     <button class="act danger" data-a="del">${ico('trash')}Supprimer</button>`);
@@ -180,6 +202,7 @@ function openActions(id) {
       const inp = $('#pickDate');
       inp.onchange = async () => {
         if (!inp.value) return;
+        if (inp.value < jour) { inp.value = n.date; toast('Choisis aujourd\'hui ou une date à venir'); return; }
         const u = await snapshot(); n.date = inp.value; n.reports = 0; closeSheet(); render(); await persist(n);
         toast('Reportée au ' + nice(n.date) + (n.date > St.addDays(jour, 1) ? ' · visible la veille' : ''), u);
       };
@@ -201,7 +224,7 @@ function draftHTML(d, i, mode) {
     ${mode === 'preview' ? `<button class="x" data-rm="${i}" aria-label="Retirer cette note">${ico('x')}</button>` : ''}
     <input class="txt" data-f="resume" value="${esc(d.resume)}" placeholder="Résumé" style="font-weight:600;${mode === 'preview' ? 'width:calc(100% - 32px)' : ''}">
     <div class="lbl">Quand</div>
-    <div class="row">${chipD(jour, "Aujourd'hui")}${chipD(t1, 'Demain')}<input type="date" class="mini" data-f="datepick" value="${d.date}"></div>
+    <div class="row">${chipD(jour, "Aujourd'hui")}${chipD(t1, 'Demain')}<input type="date" class="mini" data-f="datepick" value="${d.date}" min="${jour}"></div>
     <div class="lbl">Moment</div>
     <div class="chips">${MORDER.map(m => `<button class="chip ${d.moment === m ? 'on' : ''}" data-f="moment" data-v="${m}">${MOMENTS[m]}</button>`).join('')}</div>
     <div class="row" style="margin-top:10px;gap:10px;flex-wrap:nowrap">
@@ -258,7 +281,11 @@ function openEditor(drafts, opts) {
     };
     sh.onchange = e => {
       const el = e.target;
-      if (el.dataset.f === 'datepick' && el.value) { const i = +el.closest('.draft').dataset.i; lire(); drafts[i].date = el.value; draw(); }
+      if (el.dataset.f === 'datepick' && el.value) {
+        const i = +el.closest('.draft').dataset.i; lire();
+        if (el.value < jour) { toast('Choisis aujourd\'hui ou une date à venir'); draw(); return; }
+        drafts[i].date = el.value; draw();
+      }
     };
   };
   function lire() {
@@ -306,16 +333,34 @@ async function nouvelleSaisie(item) {
   if (!navigator.onLine) { await ajouterAttente(item); toast('Pas de réseau : note gardée, analysée au retour du réseau'); return; }
   await ajouterAttente(item);
   item.etat = 'analyse'; render();
-  openSheet(`<div class="spin"></div><div class="sub" style="text-align:center">Analyse en cours…</div>`, { lock: true });
+  openSheet(`<div class="spin"></div><div class="sub" style="text-align:center">Analyse en cours…</div>`, { lock: true, noClose: true });
   try {
     const r = await analyser(item);
     item.etat = '';
-    openEditor(r.notes, { mode: 'preview', said: r.texte, ids: [item.id] });
+    await appliquer(r.notes, r.texte, [item.id]);
   } catch (e) {
     item.etat = '';
     if (e.type !== 'incompris') closeSheet(true);
     gererErreur(e, item);
   }
+  render();
+}
+/* Résultat d'analyse : les notes complètes (action claire + jour + heure ou moment) sont enregistrées
+   directement, avec « Annuler » ; les autres passent par la carte d'aperçu. */
+async function appliquer(notes, said, ids, warn) {
+  const ok = notes.filter(n => n.complete && (n.resume || '').trim() && n.date >= jour);
+  const reste = notes.filter(n => !ok.includes(n));
+  if (ok.length) {
+    const u = await snapshot();
+    const nouvelles = ok.map(d => ({ id: uid(), resume: d.resume.trim(), personne: (d.personne || '').trim(), type: TYPES[d.type] ? d.type : 'tache',
+      date: d.date, moment: MOMENTS[d.moment] ? d.moment : 'journee', heure: d.heure || '', done: false, reports: 0, cree: Date.now() }));
+    N.push(...nouvelles);
+    await St.putMany(db, 'notes', nouvelles);
+    const quand = n => (n.date === jour ? "aujourd'hui" : n.date === St.addDays(jour, 1) ? 'demain' : nice(n.date) + ', visible la veille');
+    toast(nouvelles.length > 1 ? `${nouvelles.length} notes enregistrées` : `Enregistrée pour ${quand(nouvelles[0])} : ${nouvelles[0].resume}`, u);
+  }
+  if (reste.length) openEditor(reste, { mode: 'preview', said, ids, warn: ok.length ? `${ok.length} ${plur(ok.length, 'note enregistrée')}. Complète ${reste.length > 1 ? 'celles-ci' : 'celle-ci'} :` : warn });
+  else { supprimerAttente(ids); closeSheet(true); }
   render();
 }
 function brouillonDe(item, texte) {
@@ -352,7 +397,7 @@ async function traiterAttente() {
       item.etat = '';
     }
   } finally { attenteEnCours = false; A.forEach(p => { p.etat = ''; }); render(); }
-  if (drafts.length && !sheetOpen) openEditor(drafts, { mode: 'preview', said: dits.join(' / '), warn: 'Notes saisies plus tôt, à valider.', ids });
+  if (drafts.length && !sheetOpen) await appliquer(drafts, dits.join(' / '), ids, 'Notes saisies plus tôt, à valider.');
 }
 function openPending(pid) {
   const p = A.find(x => x.id === pid); if (!p || p.etat === 'analyse') return;
@@ -616,6 +661,12 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', () => { render(); traiterAttente(); rafraichirAbonnement(); });
 window.addEventListener('offline', render);
+
+/* ================== Mise en page stable ================== */
+function recaler() { if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0); }
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => setTimeout(recaler, 50));
+document.addEventListener('focusout', () => setTimeout(recaler, 100));
+window.addEventListener('popstate', () => setTimeout(recaler, 50));
 
 /* ================== Démarrage ================== */
 $('#setBtn').innerHTML = ico('gear');

@@ -23,12 +23,12 @@ html[data-theme="dark"]{
 html[data-theme="light"]{color-scheme:light}
 
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
-html,body{margin:0; height:100%; background:var(--bg); color:var(--text);
+html,body{margin:0; height:100%; overflow:hidden; overscroll-behavior:none; background:var(--bg); color:var(--text);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; -webkit-font-smoothing:antialiased}
 button{font:inherit; color:inherit; border:0; background:none; cursor:pointer}
 input{font:inherit; color:inherit}
 svg.i{width:1em; height:1em; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex:none}
-.app{max-width:480px; margin:0 auto; height:100dvh; position:relative; overflow:hidden; display:flex; flex-direction:column; background:var(--bg)}
+.app{max-width:480px; margin:0 auto; position:fixed; top:0; bottom:0; left:0; right:0; overflow:hidden; display:flex; flex-direction:column; background:var(--bg)}
 @media (min-width:520px){.app{border-left:1px solid var(--line); border-right:1px solid var(--line)}}
 
 /* ---------- En-tête ---------- */
@@ -112,7 +112,9 @@ main{flex:1; overflow-y:auto; padding:4px 14px 24px; overscroll-behavior:contain
 .sheet{position:absolute; left:0; right:0; bottom:0; background:var(--sheet); border-radius:22px 22px 0 0; z-index:21; max-height:90%;
   overflow-y:auto; transform:translateY(105%); transition:transform .25s cubic-bezier(.2,.8,.2,1); padding:8px 16px calc(18px + env(safe-area-inset-bottom)); box-shadow:var(--shadow)}
 .sheet.on{transform:none}
-.grab{width:38px; height:4px; border-radius:2px; background:var(--line); margin:4px auto 12px}
+.grab{width:42px; height:5px; border-radius:3px; background:var(--line); margin:2px auto 14px}
+.sheet-x{position:absolute; top:10px; right:10px; width:36px; height:36px; border-radius:50%; display:grid; place-items:center; color:var(--muted); font-size:18px; background:var(--bg); z-index:2}
+.sheet h3{padding-right:40px}
 .sheet h3{margin:0 0 4px; font-size:17px; overflow-wrap:anywhere}
 .sheet .sub{font-size:13px; color:var(--muted); margin-bottom:14px; line-height:1.4}
 .act{width:100%; display:flex; align-items:center; gap:12px; padding:13px 6px; border-radius:12px; font-size:15px; text-align:left}
