@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15181c" media="(prefers-color-scheme: dark)">
+<meta name="description" content="L'Ardoise — noter à la voix ou au clavier ses tâches, rendez-vous et rappels datés.">
+<title>L'Ardoise</title>
+<link rel="manifest" id="manifest" href="manifest.webmanifest">
+<script>
+  /* Environnement : prod = github.io/ardoise/, test = github.io/ardoise-test/, sinon local (PC). */
+  (function(){
+    var h=location.hostname, p=location.pathname;
+    var env = /github\.io$/.test(h) ? (/-test\//.test(p) ? 'test' : 'prod') : 'local';
+    window.ARDOISE_ENV = env;
+    if (env !== 'prod') {
+      document.getElementById('manifest').href = 'manifest-test.webmanifest';
+      document.title = "L'Ardoise " + env.toUpperCase();
+    }
+    /* thème choisi (avant l'affichage, pour éviter un flash de couleur) */
+    try {
+      var r = JSON.parse(localStorage.getItem('ardoise:' + env + ':reglages'));
+      if (r && (r.theme === 'light' || r.theme === 'dark')) document.documentElement.setAttribute('data-theme', r.theme);
+    } catch (e) {}
+  })();
+</script>
+<script src="version.js"></script>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <img id="brandLogo" src="icons/icon-192.png" alt="">
+      <h1>L'Ardoise</h1>
+      <span class="tag" id="envTag" hidden></span>
+    </div>
+    <div class="date" id="today"></div>
+  </header>
+  <main>
+    <div class="socle">
+      <p><b>Socle en place.</b></p>
+      <p>Cette version vérifie l'installation, le mode hors ligne et les mises à jour automatiques. Les cartes, la dictée et le récap du matin arrivent dans la prochaine version.</p>
+      <p class="muted" id="ver"></p>
+    </div>
+  </main>
+  <div class="toast" id="toast"><span id="toastMsg"></span></div>
+</div>
+<script src="js/app.js"></script>
+</body>
+</html>
