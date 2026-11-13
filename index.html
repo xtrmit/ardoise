@@ -26,28 +26,43 @@
   })();
 </script>
 <script src="version.js"></script>
+<script src="js/store.js"></script>
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
   <header>
     <div class="brand">
       <img id="brandLogo" src="icons/icon-192.png" alt="">
-      <h1>L'Ardoise</h1>
-      <span class="tag" id="envTag" hidden></span>
+      <div class="titles">
+        <h1>L'Ardoise <span class="tag" id="envTag" hidden></span></h1>
+        <div class="date"><span id="todayLabel"></span><span class="off-pill" id="offPill">Hors ligne</span></div>
+      </div>
     </div>
-    <div class="date" id="today"></div>
+    <button class="purge" id="purgeBtn" title="Purger les cartes barrées"></button>
+    <button class="icon-btn" id="setBtn" aria-label="Réglages"></button>
   </header>
-  <main>
-    <div class="socle">
-      <p><b>Socle en place.</b></p>
-      <p>Cette version vérifie l'installation, le mode hors ligne et les mises à jour automatiques. Les cartes, la dictée et le récap du matin arrivent dans la prochaine version.</p>
-      <p class="muted" id="ver"></p>
-    </div>
-  </main>
-  <div class="toast" id="toast"><span id="toastMsg"></span></div>
+
+  <main id="list"></main>
+
+  <div class="rec" id="rec" aria-live="polite">
+    <div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="time" id="recTime">0:00</div>
+    <div class="tip" id="recTip"></div>
+  </div>
+
+  <div class="bar">
+    <form class="field" id="textForm" autocomplete="off">
+      <input id="textInput" placeholder="Écrire une note…" enterkeyhint="send" aria-label="Écrire une note">
+    </form>
+    <button class="mic" id="mic" aria-label="Maintenir pour dicter"></button>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+  <div class="toast" id="toast"><div class="m" id="toastMsg"></div><button id="toastUndo">Annuler</button></div>
 </div>
 <script src="js/app.js"></script>
 </body>

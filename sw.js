@@ -1,18 +1,19 @@
-/* Service worker de L'Ardoise : rend l'app disponible hors ligne et gère la mise à jour.
+/* Service worker de L'Ardoise : rend l'app disponible hors ligne, gère la mise à jour
+   et compose le récap du matin quand n8n envoie le réveil (Web Push, sans contenu).
    - Chaque version (version.js) a son propre cache, préfixé par l'adresse du site
      (test et prod partagent le même domaine github.io : leurs caches ne se mélangent pas).
    - Une nouvelle version se télécharge en arrière-plan, puis prend la main toute seule. */
-importScripts('version.js');
+importScripts('version.js', 'js/store.js');
 
 const PREFIX = 'ardoise|' + self.registration.scope + '|';
 const CACHE = PREFIX + self.ARDOISE_VERSION;
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(self.location.hostname) || !/github\.io$/.test(self.location.hostname);
 
 const ASSETS = [
-  './', 'index.html', 'css/app.css', 'js/app.js', 'version.js',
+  './', 'index.html', 'css/app.css', 'js/app.js', 'js/store.js', 'version.js',
   'manifest.webmanifest', 'manifest-test.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
-  'icons/test-icon-192.png', 'icons/test-icon-512.png', 'icons/test-maskable-512.png'
+  'icons/test-icon-192.png', 'icons/test-icon-512.png', 'icons/test-maskable-512.png', 'icons/badge-96.png'
 ];
 
 self.addEventListener('install', e => {
@@ -61,4 +62,41 @@ self.addEventListener('fetch', e => {
       })
     )
   );
+});
+
+/* ---------- Récap du matin (Web Push) ----------
+   n8n envoie seulement {kind: "recap"} ou {kind: "essai"} : les notes ne quittent jamais le téléphone.
+   Le service worker applique le report des notes non faites, puis compose la notification. */
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) {}
+  const S = self.ArdoiseStore;
+  const env = S.envDe(self.registration.scope);
+  const icon = env === 'prod' ? 'icons/icon-192.png' : 'icons/test-icon-192.png';
+  e.waitUntil((async () => {
+    let titre = "L'Ardoise", corps = 'Ouvre L\'Ardoise pour voir ta journée.';
+    try {
+      const db = await S.open(env);
+      const jour = S.today();
+      await S.reporter(db, jour);
+      const r = S.recap(await S.all(db, 'notes'), jour);
+      titre = r.titre; corps = r.corps;
+      db.close();
+    } catch (err) {}
+    if (d.kind === 'essai') { corps = titre + (corps ? '\n' + corps : ''); titre = 'Les notifications fonctionnent'; }
+    return self.registration.showNotification(titre, {
+      body: corps, icon, badge: 'icons/badge-96.png', tag: 'ardoise-recap', renotify: true,
+      vibrate: [80, 40, 80], data: { url: self.registration.scope }
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || self.registration.scope;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const c = list.find(w => w.url.startsWith(self.registration.scope));
+    if (c) { c.postMessage({ type: 'recap' }); return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });
