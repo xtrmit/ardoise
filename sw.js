@@ -64,8 +64,8 @@ self.addEventListener('fetch', e => {
   );
 });
 
-/* ---------- Récap du matin (Web Push) ----------
-   n8n envoie seulement {kind: "recap"} ou {kind: "essai"} : les notes ne quittent jamais le téléphone.
+/* ---------- Récaps du matin et du soir (Web Push) ----------
+   n8n envoie seulement {kind: "recap" | "soir" | "essai"} : les notes ne quittent jamais le téléphone.
    Le service worker applique le report des notes non faites, puis compose la notification. */
 self.addEventListener('push', e => {
   let d = {};
@@ -79,13 +79,13 @@ self.addEventListener('push', e => {
       const db = await S.open(env);
       const jour = S.today();
       await S.reporter(db, jour);
-      const r = S.recap(await S.all(db, 'notes'), jour);
+      const r = S.recap(await S.all(db, 'notes'), jour, d.kind === 'soir' ? 'soir' : 'matin');
       titre = r.titre; corps = r.corps;
       db.close();
     } catch (err) {}
     if (d.kind === 'essai') { corps = titre + (corps ? '\n' + corps : ''); titre = 'Les notifications fonctionnent'; }
     return self.registration.showNotification(titre, {
-      body: corps, icon, badge: 'icons/badge-96.png', tag: 'ardoise-recap', renotify: true,
+      body: corps, icon, badge: 'icons/badge-96.png', tag: d.kind === 'soir' ? 'ardoise-soir' : 'ardoise-recap', renotify: true,
       vibrate: [80, 40, 80], data: { url: self.registration.scope }
     });
   })());

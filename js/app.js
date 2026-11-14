@@ -47,6 +47,8 @@ function saveR() { try { localStorage.setItem(KEY, JSON.stringify(R)); } catch (
 
 let db = null, N = [], A = [];          // N : notes, A : saisies en attente d'analyse
 let jour = St.today();
+let voirTard = false;                    // liste « plus tard » affichée à la demande, remasquée en quittant l'app
+if (!R.premierUsage) { R.premierUsage = Date.now(); saveR(); }
 const uid = () => (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const nice = k => St.fromKey(k).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -66,9 +68,11 @@ function cardHTML(n) {
   const meta = [`<span>${ico('clock')}${MOMENTS[n.moment] || 'Journée'}${n.heure ? ' · ' + St.heureFr(n.heure) : ''}</span>`];
   if (n.personne) meta.push(`<span>${ico('user')}${esc(n.personne)}</span>`);
   if (late) meta.push(`<span class="rep">Reportée ×${n.reports}</span>`);
-  return `<div class="card ${n.done ? 'done' : ''} ${late ? 'late' : ''}" data-id="${n.id}" style="--tc:${t.c}">
+  const droite = n.date <= jour ? 'Demain' : '+1 jour';
+  return `<div class="cw"><div class="sw-bg"><span class="sw-l">${ico('next')}${droite}</span><span class="sw-r">Supprimer${ico('trash')}</span></div>
+    <div class="card ${n.done ? 'done' : ''} ${late ? 'late' : ''}" data-id="${n.id}" style="--tc:${t.c}">
     <div class="body"><div class="res">${esc(n.resume)}</div><div class="meta">${meta.join('')}</div></div>
-    <div class="ticon" title="${t.label}">${ico(t.i)}</div></div>`;
+    <div class="ticon" title="${t.label}">${ico(t.i)}</div></div></div>`;
 }
 function render() {
   const t1 = St.addDays(jour, 1);
@@ -86,16 +90,27 @@ function render() {
 
   let h = '';
   if (!R.jeton) h += `<div class="notice"><span>Saisis ton jeton pour activer la dictée et l'analyse.</span><button data-go="jeton">Réglages</button></div>`;
+  else if (N.length && Date.now() - (R.sauvegarde || R.premierUsage) > 30 * 86400000 && Date.now() > (R.repousseSauvegarde || 0))
+    h += `<div class="notice"><span>Tes notes ne sont que sur ce téléphone : pense à exporter une sauvegarde.</span><button data-go="exp">Exporter</button><button data-go="snooze">Plus tard</button></div>`;
   h += `<div class="sec-head"><h2>Aujourd'hui</h2><span class="d">${nice(jour)}</span><span class="sp"></span>${lateCount ? `<span class="late-dot" title="Reportées">${lateCount}</span>` : ''}<span class="count">${todo}</span></div>`;
   A.slice().sort((a, b) => a.cree - b.cree).forEach(p => {
     const lib = p.kind === 'voice' ? 'Note vocale · ' + p.len : '« ' + esc(p.texte) + ' »';
-    const etat = p.etat === 'analyse' ? 'Analyse en cours…' : (navigator.onLine ? 'En attente d\'analyse · toucher pour les options' : 'En attente du réseau, analysée au retour');
+    const etat = p.etat === 'analyse' ? 'Analyse en cours…' : p.etat === 'valider' ? 'À valider' : (navigator.onLine && R.jeton ? 'En attente d\'analyse · toucher pour les options' : 'En attente du réseau, analysée au retour');
     h += `<div class="card pending" data-pid="${p.id}"><div class="body"><div class="res">${lib}</div><div class="meta"><span>${ico('wait')}${etat}</span></div></div></div>`;
   });
   h += today.length ? today.map(cardHTML).join('') : (A.length ? '' : `<div class="empty">Rien pour aujourd'hui. Maintiens le micro pour noter quelque chose.</div>`);
   h += `<div class="sec-head"><h2>Demain</h2><span class="d">${nice(t1)}</span><span class="sp"></span><span class="count">${tom.length}</span></div>`;
   h += `<div class="tomorrow">${tom.length ? tom.map(cardHTML).join('') : '<div class="empty">Rien de prévu pour demain.</div>'}</div>`;
-  if (later) h += `<div class="later">${ico('eye')}${later} ${plur(later, 'note programmée')} plus tard, ${plur(later, 'visible')} la veille</div>`;
+  if (later) {
+    h += `<button class="later" data-tard>${ico('eye')}<span>${later} ${plur(later, 'note programmée')} plus tard, ${plur(later, 'visible')} la veille</span><b>${voirTard ? 'Masquer' : 'Afficher'}</b></button>`;
+    if (voirTard) {
+      const tard = N.filter(n => n.date > t1).sort((a, b) => a.date.localeCompare(b.date) || St.trier(a, b));
+      let d = '';
+      h += '<div class="tard">';
+      tard.forEach(n => { if (n.date !== d) { d = n.date; h += `<div class="tard-d">${niceLong(d)}</div>`; } h += cardHTML(n); });
+      h += '</div>';
+    }
+  }
   $('#list').innerHTML = h;
   syncMic();
 }
@@ -127,7 +142,7 @@ function hideSheet() {
   $('#sheet').classList.remove('on'); $('#backdrop').classList.remove('on');
   const f = onSheetClose; onSheetClose = null; sheetOpen = false;
   if (f) f();
-  setTimeout(traiterAttente, 400);
+  setTimeout(() => { ouvrirSuivant(); traiterAttente(); }, 400);
 }
 function closeSheet(silent) {
   if (!sheetOpen) return;
@@ -159,30 +174,77 @@ $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]'
 })();
 
 /* ================== Gestes sur les cartes ================== */
-let pressT, pressEl, longDone, startX, startY;
+let pressT, pressEl, longDone, startX, startY, swipe = false, dxSw = 0;
+const SEUIL = 90;
 $('#list').addEventListener('pointerdown', e => {
   const c = e.target.closest('.card[data-id]'); if (!c) return;
-  pressEl = c; longDone = false; startX = e.clientX; startY = e.clientY; c.classList.add('pressing');
+  pressEl = c; longDone = false; swipe = false; dxSw = 0; startX = e.clientX; startY = e.clientY; c.classList.add('pressing');
   pressT = setTimeout(() => {
+    if (swipe) return;
     longDone = true; c.classList.remove('pressing');
     if (navigator.vibrate) navigator.vibrate(15);
     openActions(c.dataset.id);
   }, 480);
 });
 $('#list').addEventListener('pointermove', e => {
-  if (pressEl && (Math.abs(e.clientY - startY) > 8 || Math.abs(e.clientX - startX) > 8)) { clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl = null; }
+  if (!pressEl) return;
+  const dx = e.clientX - startX, dy = e.clientY - startY;
+  if (!swipe && !longDone && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    swipe = true; clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl.classList.add('swiping');
+  }
+  if (swipe) {
+    dxSw = dx;
+    pressEl.style.transform = `translateX(${dx}px)`;
+    const w = pressEl.parentElement;
+    w.classList.toggle('sw-right', dx > 0); w.classList.toggle('sw-left', dx < 0);
+    w.classList.toggle('sw-armed', Math.abs(dx) > SEUIL);
+    return;
+  }
+  if (Math.abs(dy) > 8 || Math.abs(dx) > 8) { clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl = null; }
 });
 ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => $('#list').addEventListener(ev, async () => {
   clearTimeout(pressT); if (!pressEl) return;
   const el = pressEl; pressEl = null; el.classList.remove('pressing');
+  if (swipe) {
+    swipe = false;
+    const n = N.find(x => x.id === el.dataset.id), dx = ev === 'pointercancel' ? 0 : dxSw;
+    el.classList.remove('swiping');
+    if (n && Math.abs(dx) > SEUIL) {
+      el.style.transform = `translateX(${dx > 0 ? 110 : -110}%)`;
+      if (navigator.vibrate) navigator.vibrate(12);
+      setTimeout(() => (dx > 0 ? repousser(n) : supprimerNote(n)), 160);
+    } else {
+      el.style.transform = '';
+      setTimeout(() => el.parentElement && el.parentElement.classList.remove('sw-right', 'sw-left', 'sw-armed'), 200);
+    }
+    return;
+  }
   if (ev === 'pointerup' && !longDone) {
     const n = N.find(x => x.id === el.dataset.id);
     if (n) { n.done = !n.done; render(); await persist(n); }
   }
 }));
+async function repousser(n) {
+  const u = await snapshot();
+  n.date = St.addDays(n.date < jour ? jour : n.date, 1); n.reports = 0;
+  await persist(n); render();
+  toast(n.date === St.addDays(jour, 1) ? 'Reportée à demain' : 'Repoussée au ' + nice(n.date) + (n.date > St.addDays(jour, 1) ? ' · visible la veille' : ''), u);
+}
+async function supprimerNote(n) {
+  const u = await snapshot();
+  N = N.filter(x => x !== n); await St.del(db, 'notes', n.id); render();
+  toast('Note supprimée', u);
+}
 $('#list').addEventListener('contextmenu', e => e.preventDefault());
 $('#list').addEventListener('click', e => {
-  const go = e.target.closest('[data-go]'); if (go) { openSettings(); return; }
+  const go = e.target.closest('[data-go]');
+  if (go) {
+    if (go.dataset.go === 'exp') exporter();
+    else if (go.dataset.go === 'snooze') { R.repousseSauvegarde = Date.now() + 7 * 86400000; saveR(); render(); }
+    else openSettings();
+    return;
+  }
+  if (e.target.closest('[data-tard]')) { voirTard = !voirTard; render(); return; }
   const p = e.target.closest('.card[data-pid]'); if (p) openPending(p.dataset.pid);
 });
 
@@ -209,10 +271,9 @@ function openActions(id) {
       try { inp.showPicker(); } catch (err) { inp.focus(); }
       return;
     }
-    const u = await snapshot();
-    if (a === 'tomorrow') { n.date = St.addDays(jour, 1); n.reports = 0; await persist(n); toast('Reportée à demain', u); }
-    if (a === 'del') { N = N.filter(x => x !== n); await St.del(db, 'notes', n.id); toast('Note supprimée', u); }
-    closeSheet(); render();
+    closeSheet();
+    if (a === 'tomorrow') return repousser(n);
+    if (a === 'del') return supprimerNote(n);
   };
 }
 
@@ -329,78 +390,85 @@ function supprimerAttente(ids) {
 }
 async function nouvelleSaisie(item) {
   Object.assign(item, { id: uid(), cree: Date.now(), date: St.today(), heure: heureNow() });
-  if (!R.jeton) { await ajouterAttente(item); toast('Note gardée : saisis ton jeton dans les Réglages pour l\'analyser'); return; }
-  if (!navigator.onLine) { await ajouterAttente(item); toast('Pas de réseau : note gardée, analysée au retour du réseau'); return; }
   await ajouterAttente(item);
+  if (!R.jeton) { toast('Note gardée : saisis ton jeton dans les Réglages pour l\'analyser'); return; }
+  if (!navigator.onLine) { toast('Pas de réseau : note gardée, analysée au retour du réseau'); return; }
+  analyserUne(item, true);          // en arrière-plan : on peut enchaîner une autre saisie
+}
+/* Analyse d'une saisie. Renvoie false si l'erreur est passagère (réseau, jeton, serveur) : on réessaiera. */
+async function analyserUne(item, direct) {
   item.etat = 'analyse'; render();
-  openSheet(`<div class="spin"></div><div class="sub" style="text-align:center">Analyse en cours…</div>`, { lock: true, noClose: true });
   try {
     const r = await analyser(item);
     item.etat = '';
-    await appliquer(r.notes, r.texte, [item.id]);
+    await appliquer(r.notes, r.texte, [item.id], direct ? '' : 'Note saisie plus tôt, à valider.');
+    return true;
   } catch (e) {
-    item.etat = '';
-    if (e.type !== 'incompris') closeSheet(true);
-    gererErreur(e, item);
+    item.etat = ''; render();
+    return gererErreur(e, item, direct);
   }
-  render();
 }
+
+/* Notes à valider : ouvertes une par une, dès qu'aucune fenêtre ni dictée n'est en cours. */
+const aValider = [];
+function proposer(x) {
+  x.ids.forEach(id => { const p = A.find(q => q.id === id); if (p) p.etat = 'valider'; });
+  aValider.push(x); render(); ouvrirSuivant();
+}
+function ouvrirSuivant() {
+  if (sheetOpen || rec || !aValider.length || document.activeElement === inp) return;
+  const x = aValider.shift();
+  openEditor(x.notes, { mode: 'preview', said: x.said, ids: x.ids, warn: x.warn });
+}
+
 /* Résultat d'analyse : les notes complètes (action claire + jour + heure ou moment) sont enregistrées
    directement, avec « Annuler » ; les autres passent par la carte d'aperçu. */
 async function appliquer(notes, said, ids, warn) {
   const ok = notes.filter(n => n.complete && (n.resume || '').trim() && n.date >= jour);
   const reste = notes.filter(n => !ok.includes(n));
   if (ok.length) {
-    const u = await snapshot();
     const nouvelles = ok.map(d => ({ id: uid(), resume: d.resume.trim(), personne: (d.personne || '').trim(), type: TYPES[d.type] ? d.type : 'tache',
       date: d.date, moment: MOMENTS[d.moment] ? d.moment : 'journee', heure: d.heure || '', done: false, reports: 0, cree: Date.now() }));
     N.push(...nouvelles);
     await St.putMany(db, 'notes', nouvelles);
+    const idsN = nouvelles.map(n => n.id);
+    const undo = async () => { N = N.filter(n => !idsN.includes(n.id)); for (const id of idsN) await St.del(db, 'notes', id); render(); };
     const quand = n => (n.date === jour ? "aujourd'hui" : n.date === St.addDays(jour, 1) ? 'demain' : nice(n.date) + ', visible la veille');
-    toast(nouvelles.length > 1 ? `${nouvelles.length} notes enregistrées` : `Enregistrée pour ${quand(nouvelles[0])} : ${nouvelles[0].resume}`, u);
+    toast(nouvelles.length > 1 ? `${nouvelles.length} notes enregistrées` : `Enregistrée pour ${quand(nouvelles[0])} : ${nouvelles[0].resume}`, undo);
   }
-  if (reste.length) openEditor(reste, { mode: 'preview', said, ids, warn: ok.length ? `${ok.length} ${plur(ok.length, 'note enregistrée')}. Complète ${reste.length > 1 ? 'celles-ci' : 'celle-ci'} :` : warn });
-  else { supprimerAttente(ids); closeSheet(true); }
+  if (reste.length) proposer({ notes: reste, said, ids, warn: ok.length ? `${ok.length} ${plur(ok.length, 'note enregistrée')}. Complète ${reste.length > 1 ? 'celles-ci' : 'celle-ci'} :` : warn });
+  else supprimerAttente(ids);
   render();
 }
 function brouillonDe(item, texte) {
   return { resume: (texte || '').trim(), personne: '', type: 'tache', date: item.date < jour ? jour : item.date, moment: 'journee', heure: '' };
 }
-function gererErreur(e, item) {
+function gererErreur(e, item, direct) {
   switch (e.type) {
-    case 'vide': supprimerAttente([item.id]); toast(item.kind === 'voice' ? "Je n'ai rien entendu. Réessaie en parlant près du micro." : 'Note vide'); break;
-    case 'incompris': openEditor([brouillonDe(item, e.texte || item.texte)], { mode: 'preview', said: e.texte || item.texte, warn: "Je n'ai pas tout compris : complète la note.", ids: [item.id] }); break;
-    case 'jeton': toast('Jeton refusé : vérifie-le dans les Réglages. Note gardée.'); break;
-    case 'reseau': toast('Pas de réseau : note gardée, analysée au retour du réseau'); break;
-    case 'trop-long': supprimerAttente([item.id]); toast('Dictée trop longue : fais plusieurs notes plus courtes'); break;
-    default: toast("Analyse impossible pour le moment. Note gardée, réessai plus tard.");
+    case 'vide': supprimerAttente([item.id]); toast(item.kind === 'voice' ? "Je n'ai rien entendu. Réessaie en parlant près du micro." : 'Note vide'); return true;
+    case 'trop-long': supprimerAttente([item.id]); toast('Dictée trop longue : fais plusieurs notes plus courtes'); return true;
+    case 'incompris': proposer({ notes: [brouillonDe(item, e.texte || item.texte)], said: e.texte || item.texte, ids: [item.id], warn: "Je n'ai pas tout compris : complète la note." }); return true;
+    case 'jeton': if (direct) toast('Jeton refusé : vérifie-le dans les Réglages. Note gardée.'); return false;
+    case 'reseau': if (direct) toast('Pas de réseau : note gardée, analysée au retour du réseau'); return false;
+    default: if (direct) toast("Analyse impossible pour le moment. Note gardée, réessai plus tard."); return false;
   }
 }
 let attenteEnCours = false;
 async function traiterAttente() {
-  if (attenteEnCours || sheetOpen || !A.length || !navigator.onLine || !R.jeton) return;
+  ouvrirSuivant();
+  if (attenteEnCours || !navigator.onLine || !R.jeton) return;
+  const liste = A.filter(p => !p.etat).sort((a, b) => a.cree - b.cree);
+  if (!liste.length) return;
   attenteEnCours = true;
-  const drafts = [], ids = [], dits = [];
   try {
-    for (const item of A.slice().sort((a, b) => a.cree - b.cree)) {
-      if (sheetOpen) break;
-      item.etat = 'analyse'; render();
-      try {
-        const r = await analyser(item);
-        drafts.push(...r.notes); ids.push(item.id); dits.push(r.texte);
-      } catch (e) {
-        item.etat = '';
-        if (e.type === 'vide' || e.type === 'trop-long') supprimerAttente([item.id]);
-        else if (e.type === 'incompris') { drafts.push(brouillonDe(item, e.texte || item.texte)); ids.push(item.id); dits.push(e.texte || item.texte); }
-        else break;                                 // réseau, jeton ou serveur : on réessaiera plus tard
-      }
-      item.etat = '';
+    for (const item of liste) {
+      if (!navigator.onLine || !A.includes(item)) continue;
+      if (await analyserUne(item, false) === false) break;   // passager : on réessaiera plus tard
     }
-  } finally { attenteEnCours = false; A.forEach(p => { p.etat = ''; }); render(); }
-  if (drafts.length && !sheetOpen) await appliquer(drafts, dits.join(' / '), ids, 'Notes saisies plus tôt, à valider.');
+  } finally { attenteEnCours = false; render(); }
 }
 function openPending(pid) {
-  const p = A.find(x => x.id === pid); if (!p || p.etat === 'analyse') return;
+  const p = A.find(x => x.id === pid); if (!p || p.etat === 'analyse' || p.etat === 'valider') return;
   openSheet(`<h3>${p.kind === 'voice' ? 'Note vocale · ' + p.len : '« ' + esc(p.texte) + ' »'}</h3>
     <div class="sub">Saisie le ${nice(p.date)} à ${St.heureFr(p.heure)}. Elle sera analysée dès que possible.</div>
     ${navigator.onLine && R.jeton ? `<button class="act" data-a="go">${ico('play')}Analyser maintenant</button>` : ''}
@@ -408,7 +476,7 @@ function openPending(pid) {
     <button class="act danger" data-a="del">${ico('trash')}Supprimer</button>`);
   $('#sheet').onclick = e => {
     const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
-    if (a === 'go') { closeSheet(); setTimeout(traiterAttente, 450); }
+    if (a === 'go') { closeSheet(); setTimeout(() => analyserUne(p, true), 300); }
     if (a === 'hand') openEditor([brouillonDe(p, p.texte)], { mode: 'preview', said: p.texte, ids: [p.id] });
     if (a === 'del') { closeSheet(); supprimerAttente([p.id]); toast('Note supprimée'); }
   };
@@ -422,6 +490,7 @@ function syncMic() {
   mic.setAttribute('aria-label', t ? 'Envoyer' : 'Maintenir pour dicter');
 }
 inp.addEventListener('input', syncMic);
+inp.addEventListener('blur', () => setTimeout(ouvrirSuivant, 300));
 $('#textForm').onsubmit = e => { e.preventDefault(); envoyerTexte(); };
 function envoyerTexte() {
   const t = inp.value.trim(); if (!t) return;
@@ -470,6 +539,7 @@ mic.addEventListener('pointerdown', e => {
       if (dur < 600) { toast('Maintiens le bouton pendant que tu parles'); return; }
       const s = Math.round(dur / 1000);
       nouvelleSaisie({ kind: 'voice', audio: new Blob(chunks, { type: mime.split(';')[0] }), mime, len: Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') });
+      setTimeout(ouvrirSuivant, 300);
     };
     r.mr = mr; r.t0 = Date.now(); r.phase = 'rec';
     mr.start(250);
@@ -495,6 +565,7 @@ function stopRec() {
   rec = null; clearInterval(r.timer); clearTimeout(r.max); recUI(false);
   $('#rec').classList.remove('cancelling'); $('#recTime').textContent = '0:00';
   if (r.mr && r.mr.state !== 'inactive') r.mr.stop();
+  setTimeout(ouvrirSuivant, 400);
 }
 mic.addEventListener('pointerup', () => {
   if (rec) { if (rec.phase === 'rec') stopRec(); else rec.up = true; return; }
@@ -518,6 +589,15 @@ function cleBytes(b64) {
   const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b64.length % 4) % 4));
   return Uint8Array.from(s, c => c.charCodeAt(0));
 }
+const horaires = () => ({ matin: R.matin === undefined ? '07:00' : R.matin, soir: R.soir || '' });
+function optionsHeures(de, a, val) {
+  let o = `<option value="" ${val ? '' : 'selected'}>Désactivé</option>`;
+  for (let h = de; h <= a; h++) for (const m of ['00', '15', '30', '45']) {
+    const v = String(h).padStart(2, '0') + ':' + m;
+    o += `<option value="${v}" ${v === val ? 'selected' : ''}>${h} h ${m === '00' ? '' : m}</option>`;
+  }
+  return o;
+}
 async function abonnement() {
   const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('sw')), 2000))]);
   return reg.pushManager.getSubscription();
@@ -529,7 +609,8 @@ async function activerNotifs() {
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
-  await api({ action: 'abonner', abonnement: sub.toJSON() });
+  if (R.matin === undefined && info.horaires) { R.matin = info.horaires.matin; R.soir = info.horaires.soir; }
+  await api({ action: 'abonner', abonnement: sub.toJSON(), horaires: horaires() });
   R.notifs = true; saveR();
 }
 async function rafraichirAbonnement() {    // l'adresse d'abonnement peut changer : on la renvoie au démarrage
@@ -537,7 +618,7 @@ async function rafraichirAbonnement() {    // l'adresse d'abonnement peut change
   try {
     let s = await abonnement();
     if (!s) { const info = await api({ action: 'cle' }); const reg = await navigator.serviceWorker.ready; s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) }); }
-    await api({ action: 'abonner', abonnement: s.toJSON() });
+    await api({ action: 'abonner', abonnement: s.toJSON(), horaires: horaires() });
   } catch (e) {}
 }
 
@@ -552,18 +633,33 @@ async function openSettings() {
   const jetonAff = R.jeton ? '••••••' + esc(R.jeton.slice(-4)) : 'non saisi';
   let notifHTML;
   if (!pushOk()) notifHTML = '<span class="v">Indisponible sur ce navigateur</span>';
-  else if (notifOn) notifHTML = `<button class="chip" data-x="essai">Essai</button><button class="chip" data-x="notifOff">Désactiver</button>`;
+  else if (notifOn) notifHTML = `<button class="chip" data-x="essai">Essai</button><button class="chip" data-x="notifOff">Désactiver</button>
+      <div class="hrow"><span>Récap du matin</span><select class="mini" data-h="matin">${optionsHeures(5, 11, horaires().matin)}</select></div>
+      <div class="hrow"><span>Récap du soir (demain)</span><select class="mini" data-h="soir">${optionsHeures(17, 23, horaires().soir)}</select></div>`;
   else notifHTML = `<button class="chip on" data-x="notifOn">Activer</button>`;
   openSheet(`<h3>Réglages</h3><div class="sub">Ces réglages et toutes les notes restent sur ce téléphone.</div>
     <div class="set"><span class="k">Thème</span><div class="seg">${[['auto', 'Auto'], ['light', 'Clair'], ['dark', 'Sombre']].map(([k, l]) => `<button data-th="${k}" class="${R.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
-    <div class="set"><span class="k">Récap du matin à 7 h</span>${notifHTML}
-      ${self.Notification && Notification.permission === 'denied' ? '<div class="note" style="color:var(--late)">Notifications bloquées : Paramètres du téléphone → Applications → L\'Ardoise → Notifications.</div>' : '<div class="note">Chaque matin, la liste du jour. Les notes non faites passent automatiquement au lendemain.</div>'}</div>
+    <div class="set"><span class="k">Notifications</span>${notifHTML}
+      ${self.Notification && Notification.permission === 'denied' ? '<div class="note" style="color:var(--late)">Notifications bloquées : Paramètres du téléphone → Applications → L\'Ardoise → Notifications.</div>' : '<div class="note">Le matin, la liste du jour ; le soir, celle de demain. Les notes non faites passent automatiquement au lendemain.</div>'}</div>
     <div class="set" id="jetonRow"><span class="k">Jeton</span><span class="v">${jetonAff}</span><button class="chip" data-x="jeton">${R.jeton ? 'Modifier' : 'Saisir'}</button></div>
     <div class="set"><span class="k">Sauvegarde</span><button class="chip" data-x="exp">Exporter</button><button class="chip" data-x="imp">Importer</button>
       <input type="file" id="impFile" accept="application/json,.json" hidden></div>
     <div class="lbl" style="margin-top:16px">Couleurs des types</div>
     <div class="legend">${Object.values(TYPES).map(t => `<span style="--tc:${t.c}"><i></i>${t.label}</span>`).join('')}</div>
     <div class="set" style="border:0"><span class="k">L'Ardoise v${VERSION}${ENV !== 'prod' ? ' · ' + ENV.toUpperCase() : ''}</span><button class="chip" data-x="maj">Mise à jour</button><span class="note" id="majOut"></span></div>`);
+  $('#sheet').onchange = async e => {
+    const h = e.target.closest('[data-h]'); if (!h) return;
+    const avant = { matin: R.matin, soir: R.soir };
+    R[h.dataset.h] = h.value; saveR();
+    try {
+      const r = await api({ action: 'horaires', horaires: horaires() });
+      toast(h.value ? `Récap du ${h.dataset.h === 'matin' ? 'matin' : 'soir'} à ${St.heureFr(h.value)}` : `Récap du ${h.dataset.h} désactivé`);
+      if (r.horaires) { R.matin = r.horaires.matin; R.soir = r.horaires.soir; saveR(); }
+    } catch (err) {
+      R.matin = avant.matin; R.soir = avant.soir; saveR();
+      toast(err.type === 'reseau' ? 'Pas de réseau : horaire non modifié' : 'Horaire non modifié'); openSettings();
+    }
+  };
   $('#sheet').onclick = async e => {
     const th = e.target.closest('[data-th]');
     if (th) { R.theme = th.dataset.th; saveR(); themeApply(); openSettings(); return; }
@@ -573,7 +669,7 @@ async function openSettings() {
     if (x === 'imp') { const f = $('#impFile'); f.onchange = () => f.files[0] && importer(f.files[0]); f.click(); return; }
     if (x === 'maj') return checkUpdate($('#majOut'));
     try {
-      if (x === 'notifOn') { e.target.disabled = true; await activerNotifs(); toast('Récap du matin activé'); openSettings(); }
+      if (x === 'notifOn') { e.target.disabled = true; await activerNotifs(); toast('Notifications activées'); openSettings(); }
       if (x === 'notifOff') { const s = await abonnement(); if (s) await s.unsubscribe().catch(() => {}); await api({ action: 'desabonner' }).catch(() => {}); R.notifs = false; saveR(); toast('Notifications désactivées'); openSettings(); }
       if (x === 'essai') { await api({ action: 'essai', kind: 'essai' }); toast("Notification d'essai envoyée : elle arrive dans quelques secondes"); }
     } catch (err) {
@@ -605,6 +701,7 @@ function exporter() {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'ardoise-' + St.today() + '.json';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  R.sauvegarde = Date.now(); saveR(); render();
   toast('Sauvegarde enregistrée dans Téléchargements');
 }
 async function importer(file) {
@@ -654,7 +751,7 @@ function planifierMinuit() {
   setTimeout(() => { nouvelleJournee(); planifierMinuit(); }, m - d);
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
+  if (document.visibilityState !== 'visible') { if (voirTard) { voirTard = false; render(); } return; }
   if (swReg) swReg.update().catch(() => {});
   if (St.today() !== jour) nouvelleJournee(); else render();
   traiterAttente();
@@ -688,6 +785,14 @@ themeApply();
   if (R.lastV && R.lastV !== VERSION) R.updNote = VERSION;
   R.lastV = VERSION; saveR();
   if (R.updNote === VERSION) setTimeout(() => { toast("L'Ardoise mise à jour (v" + VERSION + ')'); setTimeout(() => { delete R.updNote; saveR(); }, 4000); }, 500);
+  /* Texte partagé depuis une autre app (Partager → L'Ardoise) ou raccourci « Écrire une note » */
+  const qs = new URLSearchParams(location.search);
+  if (qs.has('texte') || qs.has('titre') || qs.has('lien') || qs.has('ecrire')) {
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    const t = [qs.get('titre'), qs.get('texte'), qs.get('lien')].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    if (t) { nouvelleSaisie({ kind: 'text', texte: t.slice(0, 2000) }); toast('Texte partagé reçu : analyse en cours'); }
+    else if (qs.has('ecrire')) setTimeout(() => inp.focus(), 350);
+  }
   setTimeout(traiterAttente, 800);
   setTimeout(rafraichirAbonnement, 3000);
 })();

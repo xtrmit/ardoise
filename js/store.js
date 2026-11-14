@@ -68,15 +68,26 @@
     return MORDER.indexOf(a.moment) - MORDER.indexOf(b.moment) || (a.heure || '99').localeCompare(b.heure || '99') || (a.cree || 0) - (b.cree || 0);
   }
 
-  /* Texte du récap du matin, composé sur le téléphone. */
-  function recap(notes, jour) {
+  /* Texte des récaps, composé sur le téléphone : matin (la journée) ou soir (demain). */
+  function recap(notes, jour, kind) {
+    const s = (n, m) => n > 1 ? m + 's' : m;
+    const liste = l => {
+      let c = l.slice(0, 4).map(n => '• ' + n.resume + (n.heure ? ' (' + heureFr(n.heure) + ')' : '')).join('\n');
+      if (l.length > 4) c += `\n… et ${l.length - 4} ${s(l.length - 4, 'autre')}`;
+      return c;
+    };
+    if (kind === 'soir') {
+      const dem = addDays(jour, 1);
+      const l = notes.filter(n => n.date === dem && !n.done).sort(trier);
+      const reste = notes.filter(n => n.date <= jour && !n.done).length;
+      const titre = l.length ? `Demain : ${l.length} ${s(l.length, 'note')}` : 'Rien de prévu demain';
+      const corps = [liste(l), reste ? `Encore ${reste} à faire aujourd'hui` : ''].filter(Boolean).join('\n');
+      return { titre, corps, nombre: l.length };
+    }
     const l = notes.filter(n => n.date === jour && !n.done).sort(trier);
     const rep = l.filter(n => n.reports > 0).length;
-    const s = (n, m) => n > 1 ? m + 's' : m;
     const titre = l.length ? `Ta journée : ${l.length} ${s(l.length, 'note')}${rep ? `, dont ${rep} ${s(rep, 'reportée')}` : ''}` : "Rien de prévu aujourd'hui";
-    let corps = l.slice(0, 4).map(n => '• ' + n.resume + (n.heure ? ' (' + heureFr(n.heure) + ')' : '')).join('\n');
-    if (l.length > 4) corps += `\n… et ${l.length - 4} ${s(l.length - 4, 'autre')}`;
-    return { titre, corps, nombre: l.length };
+    return { titre, corps: liste(l), nombre: l.length };
   }
 
   G.ArdoiseStore = { MORDER, MOMENTS, TYPES, envDe, key, fromKey, addDays, today, heureFr, open, all, put, del, remplacer, putMany, reporter, trier, recap };

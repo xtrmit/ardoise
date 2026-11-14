@@ -75,7 +75,26 @@ main{flex:1; overflow-y:auto; padding:4px 14px 24px; overscroll-behavior:contain
 .card.done{opacity:.5}
 .card.pending{border-style:dashed; border-left-width:1px; background:transparent; --tc:var(--muted)}
 .empty{font-size:13.5px; color:var(--muted); padding:12px 4px}
-.later{margin:18px 4px 0; font-size:12.5px; color:var(--muted); display:flex; align-items:center; gap:6px}
+.later{margin:18px 0 0; width:100%; padding:8px 4px; font-size:12.5px; color:var(--muted); display:flex; align-items:center; gap:6px; text-align:left}
+.later span{flex:1}
+.later b{color:var(--accent); font-weight:650}
+.tard{margin-top:4px}
+.tard-d{font-size:12.5px; color:var(--muted); margin:12px 4px 6px; font-weight:600}
+/* Glisser une carte : droite = repousser, gauche = supprimer */
+.cw{position:relative; margin-bottom:8px; border-radius:14px}
+.cw .card{margin-bottom:0}
+.sw-bg{position:absolute; inset:0; border-radius:14px; display:none; align-items:center; justify-content:space-between; padding:0 18px; font-size:13.5px; font-weight:650; color:#fff}
+.sw-bg span{display:flex; gap:6px; align-items:center}
+.sw-bg svg{font-size:17px}
+.cw.sw-right .sw-bg{display:flex; background:color-mix(in srgb,var(--accent) 65%,transparent)}
+.cw.sw-left .sw-bg{display:flex; background:color-mix(in srgb,var(--late) 65%,transparent)}
+.cw.sw-right.sw-armed .sw-bg{background:var(--accent)}
+.cw.sw-left.sw-armed .sw-bg{background:var(--late)}
+.cw.sw-right .sw-r,.cw.sw-left .sw-l{visibility:hidden}
+.card.swiping{transition:none}
+.card.done,.tomorrow .card{background-clip:padding-box}
+.hrow{flex-basis:100%; display:flex; align-items:center; gap:10px; font-size:14px; margin-top:6px}
+.hrow span{flex:1}
 .notice{background:var(--accent-soft); border-radius:14px; padding:12px 14px; font-size:14px; line-height:1.4; margin:10px 0 4px; display:flex; gap:10px; align-items:center}
 .notice span{flex:1}
 .notice button{font-weight:700; color:var(--accent); padding:6px 4px}
