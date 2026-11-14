@@ -175,7 +175,7 @@ $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]'
 
 /* ================== Gestes sur les cartes ================== */
 let pressT, pressEl, longDone, startX, startY, swipe = false, dxSw = 0;
-const SEUIL = 90;
+const SEUIL = 80;
 $('#list').addEventListener('pointerdown', e => {
   const c = e.target.closest('.card[data-id]'); if (!c) return;
   pressEl = c; longDone = false; swipe = false; dxSw = 0; startX = e.clientX; startY = e.clientY; c.classList.add('pressing');
@@ -189,8 +189,9 @@ $('#list').addEventListener('pointerdown', e => {
 $('#list').addEventListener('pointermove', e => {
   if (!pressEl) return;
   const dx = e.clientX - startX, dy = e.clientY - startY;
-  if (!swipe && !longDone && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+  if (!swipe && !longDone && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
     swipe = true; clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl.classList.add('swiping');
+    try { pressEl.setPointerCapture(e.pointerId); } catch (err) {}
   }
   if (swipe) {
     dxSw = dx;
@@ -200,9 +201,12 @@ $('#list').addEventListener('pointermove', e => {
     w.classList.toggle('sw-armed', Math.abs(dx) > SEUIL);
     return;
   }
-  if (Math.abs(dy) > 8 || Math.abs(dx) > 8) { clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl = null; }
+  // Mouvement vertical franc : c'est un défilement de la liste, pas un geste sur la carte.
+  if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(pressT); pressEl.classList.remove('pressing'); pressEl = null; }
+  else if (Math.abs(dx) > 6 || Math.abs(dy) > 6) clearTimeout(pressT);   // le doigt bouge : pas d'appui long
 });
 ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => $('#list').addEventListener(ev, async () => {
+  if (ev === 'pointerleave' && swipe) return;          // doigt capturé : le geste continue hors de la liste
   clearTimeout(pressT); if (!pressEl) return;
   const el = pressEl; pressEl = null; el.classList.remove('pressing');
   if (swipe) {
@@ -424,7 +428,9 @@ function ouvrirSuivant() {
 /* Résultat d'analyse : les notes complètes (action claire + jour + heure ou moment) sont enregistrées
    directement, avec « Annuler » ; les autres passent par la carte d'aperçu. */
 async function appliquer(notes, said, ids, warn) {
-  const ok = notes.filter(n => n.complete && (n.resume || '').trim() && n.date >= jour);
+  // Sans date (ou date passée) : aujourd'hui. Seule une note incomprise passe par la fiche à compléter.
+  notes.forEach(n => { if (!n.date || n.date < jour) n.date = jour; });
+  const ok = notes.filter(n => n.complete && (n.resume || '').trim());
   const reste = notes.filter(n => !ok.includes(n));
   if (ok.length) {
     const nouvelles = ok.map(d => ({ id: uid(), resume: d.resume.trim(), personne: (d.personne || '').trim(), type: TYPES[d.type] ? d.type : 'tache',
@@ -436,7 +442,7 @@ async function appliquer(notes, said, ids, warn) {
     const quand = n => (n.date === jour ? "aujourd'hui" : n.date === St.addDays(jour, 1) ? 'demain' : nice(n.date) + ', visible la veille');
     toast(nouvelles.length > 1 ? `${nouvelles.length} notes enregistrées` : `Enregistrée pour ${quand(nouvelles[0])} : ${nouvelles[0].resume}`, undo);
   }
-  if (reste.length) proposer({ notes: reste, said, ids, warn: ok.length ? `${ok.length} ${plur(ok.length, 'note enregistrée')}. Complète ${reste.length > 1 ? 'celles-ci' : 'celle-ci'} :` : warn });
+  if (reste.length) proposer({ notes: reste, said, ids, warn: (ok.length ? `${ok.length} ${plur(ok.length, 'note enregistrée')}. ` : '') + "Je n'ai pas tout compris : complète." });
   else supprimerAttente(ids);
   render();
 }

@@ -91,7 +91,7 @@ main{flex:1; overflow-y:auto; padding:4px 14px 24px; overscroll-behavior:contain
 .cw.sw-right.sw-armed .sw-bg{background:var(--accent)}
 .cw.sw-left.sw-armed .sw-bg{background:var(--late)}
 .cw.sw-right .sw-r,.cw.sw-left .sw-l{visibility:hidden}
-.card.swiping{transition:none}
+.card.swiping{transition:none; touch-action:none}
 .card.done,.tomorrow .card{background-clip:padding-box}
 .hrow{flex-basis:100%; display:flex; align-items:center; gap:10px; font-size:14px; margin-top:6px}
 .hrow span{flex:1}
