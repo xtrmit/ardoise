@@ -614,18 +614,27 @@ async function activerNotifs() {
   const info = await api({ action: 'cle' });
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
+  if (sub && !info.abonne) { await sub.unsubscribe().catch(() => {}); sub = null; }   // ancien abonnement peut-être expiré : on repart d'un neuf
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
   if (R.matin === undefined && info.horaires) { R.matin = info.horaires.matin; R.soir = info.horaires.soir; }
   await api({ action: 'abonner', abonnement: sub.toJSON(), horaires: horaires() });
   R.notifs = true; saveR();
 }
-async function rafraichirAbonnement() {    // l'adresse d'abonnement peut changer : on la renvoie au démarrage
+/* Vérifie l'abonnement aux notifications au démarrage et au retour dans l'app (au plus une fois par heure).
+   Si n8n l'a effacé (abonnement expiré chez Google, réponse 410), l'ancien est jeté et un nouveau est créé. */
+let dernierControle = 0;
+async function rafraichirAbonnement(force) {
   if (!pushOk() || !R.jeton || !R.notifs || Notification.permission !== 'granted' || !navigator.onLine) return;
+  if (!force && Date.now() - dernierControle < 3600000) return;
+  dernierControle = Date.now();
   try {
-    let s = await abonnement();
-    if (!s) { const info = await api({ action: 'cle' }); const reg = await navigator.serviceWorker.ready; s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) }); }
+    const info = await api({ action: 'cle' });
+    const reg = await navigator.serviceWorker.ready;
+    let s = await reg.pushManager.getSubscription();
+    if (s && !info.abonne) { await s.unsubscribe().catch(() => {}); s = null; }
+    if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
     await api({ action: 'abonner', abonnement: s.toJSON(), horaires: horaires() });
-  } catch (e) {}
+  } catch (e) { dernierControle = 0; }
 }
 
 /* ================== Réglages ================== */
@@ -761,6 +770,7 @@ document.addEventListener('visibilitychange', () => {
   if (swReg) swReg.update().catch(() => {});
   if (St.today() !== jour) nouvelleJournee(); else render();
   traiterAttente();
+  rafraichirAbonnement();
 });
 window.addEventListener('online', () => { render(); traiterAttente(); rafraichirAbonnement(); });
 window.addEventListener('offline', render);
@@ -800,5 +810,5 @@ themeApply();
     else if (qs.has('ecrire')) setTimeout(() => inp.focus(), 350);
   }
   setTimeout(traiterAttente, 800);
-  setTimeout(rafraichirAbonnement, 3000);
+  setTimeout(() => rafraichirAbonnement(true), 3000);
 })();
