@@ -91,6 +91,20 @@ self.addEventListener('push', e => {
   })());
 });
 
+/* Réparation automatique de l'abonnement, même sans ouvrir l'app :
+   - pushsubscriptionchange : le navigateur signale que l'abonnement a changé ;
+   - periodicsync : contrôle environ deux fois par jour (installée, Chrome décide du moment exact). */
+async function reparer(source) {
+  const S = self.ArdoiseStore;
+  if (Notification.permission !== 'granted') return;
+  const db = await S.open(S.envDe(self.registration.scope));
+  const m = await S.getMeta(db, 'api'); db.close();
+  if (!m || !m.notifs) return;
+  return S.verifierAbonnement(self.registration, m, source);
+}
+self.addEventListener('pushsubscriptionchange', e => { e.waitUntil(reparer('changement').catch(() => {})); });
+self.addEventListener('periodicsync', e => { if (e.tag === 'ardoise-abonnement') e.waitUntil(reparer('controle').catch(() => {})); });
+
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = (e.notification.data && e.notification.data.url) || self.registration.scope;

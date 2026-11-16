@@ -617,23 +617,30 @@ async function activerNotifs() {
   if (sub && !info.abonne) { await sub.unsubscribe().catch(() => {}); sub = null; }   // ancien abonnement peut-être expiré : on repart d'un neuf
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
   if (R.matin === undefined && info.horaires) { R.matin = info.horaires.matin; R.soir = info.horaires.soir; }
-  await api({ action: 'abonner', abonnement: sub.toJSON(), horaires: horaires() });
-  R.notifs = true; saveR();
+  await api({ action: 'abonner', abonnement: sub.toJSON(), horaires: horaires(), source: 'activation' });
+  R.notifs = true; saveR(); memoriserMeta(); dernierControle = 0; setTimeout(() => rafraichirAbonnement(true), 1500);
 }
-/* Vérifie l'abonnement aux notifications au démarrage et au retour dans l'app (au plus une fois par heure).
-   Si n8n l'a effacé (abonnement expiré chez Google, réponse 410), l'ancien est jeté et un nouveau est créé. */
+/* Ce que le service worker doit connaître pour réparer seul l'abonnement (même appareil, même environnement). */
+async function memoriserMeta() {
+  try { await St.put(db, 'meta', { k: 'api', api: API, jeton: R.jeton || '', notifs: !!R.notifs, horaires: horaires() }); } catch (e) {}
+}
+/* Vérifie l'abonnement aux notifications au démarrage et à chaque retour dans l'app (au plus toutes les 10 min) :
+   s'il a été effacé par n8n (expiré chez Google) ou si n8n a une autre adresse, il est recréé ou renvoyé. */
 let dernierControle = 0;
 async function rafraichirAbonnement(force) {
   if (!pushOk() || !R.jeton || !R.notifs || Notification.permission !== 'granted' || !navigator.onLine) return;
-  if (!force && Date.now() - dernierControle < 3600000) return;
+  if (!force && Date.now() - dernierControle < 600000) return;
   dernierControle = Date.now();
   try {
-    const info = await api({ action: 'cle' });
+    await memoriserMeta();
     const reg = await navigator.serviceWorker.ready;
-    let s = await reg.pushManager.getSubscription();
-    if (s && !info.abonne) { await s.unsubscribe().catch(() => {}); s = null; }
-    if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
-    await api({ action: 'abonner', abonnement: s.toJSON(), horaires: horaires() });
+    await St.verifierAbonnement(reg, { api: API, jeton: R.jeton, horaires: horaires() }, 'app');
+    if (reg.periodicSync) {
+      try {
+        const st = await navigator.permissions.query({ name: 'periodic-background-sync' });
+        if (st.state === 'granted') await reg.periodicSync.register('ardoise-abonnement', { minInterval: 12 * 3600 * 1000 });
+      } catch (e) {}
+    }
   } catch (e) { dernierControle = 0; }
 }
 
@@ -670,6 +677,7 @@ async function openSettings() {
       const r = await api({ action: 'horaires', horaires: horaires() });
       toast(h.value ? `Récap du ${h.dataset.h === 'matin' ? 'matin' : 'soir'} à ${St.heureFr(h.value)}` : `Récap du ${h.dataset.h} désactivé`);
       if (r.horaires) { R.matin = r.horaires.matin; R.soir = r.horaires.soir; saveR(); }
+      memoriserMeta();
     } catch (err) {
       R.matin = avant.matin; R.soir = avant.soir; saveR();
       toast(err.type === 'reseau' ? 'Pas de réseau : horaire non modifié' : 'Horaire non modifié'); openSettings();
@@ -685,7 +693,7 @@ async function openSettings() {
     if (x === 'maj') return checkUpdate($('#majOut'));
     try {
       if (x === 'notifOn') { e.target.disabled = true; await activerNotifs(); toast('Notifications activées'); openSettings(); }
-      if (x === 'notifOff') { const s = await abonnement(); if (s) await s.unsubscribe().catch(() => {}); await api({ action: 'desabonner' }).catch(() => {}); R.notifs = false; saveR(); toast('Notifications désactivées'); openSettings(); }
+      if (x === 'notifOff') { const s = await abonnement(); if (s) await s.unsubscribe().catch(() => {}); await api({ action: 'desabonner' }).catch(() => {}); R.notifs = false; saveR(); memoriserMeta(); toast('Notifications désactivées'); openSettings(); }
       if (x === 'essai') { await api({ action: 'essai', kind: 'essai' }); toast("Notification d'essai envoyée : elle arrive dans quelques secondes"); }
     } catch (err) {
       toast(err.type === 'jeton' ? 'Jeton refusé : vérifie-le' : err.type === 'reseau' ? 'Pas de réseau pour le moment' : (err.message || 'Erreur'));
@@ -704,7 +712,7 @@ function saisirJeton() {
     const v = i.value.trim(); if (!v) return;
     const old = R.jeton; R.jeton = v;
     $('#jetonOut').textContent = 'Vérification…';
-    try { await api({ action: 'ping' }); saveR(); toast('Jeton enregistré'); render(); openSettings(); traiterAttente(); }
+    try { await api({ action: 'ping' }); saveR(); memoriserMeta(); toast('Jeton enregistré'); render(); openSettings(); traiterAttente(); }
     catch (err) {
       R.jeton = old;
       $('#jetonOut').textContent = err.type === 'jeton' ? 'Jeton refusé.' : 'Impossible de vérifier (réseau). Réessaie plus tard.';

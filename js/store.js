@@ -23,11 +23,13 @@
   /* ---------- IndexedDB ---------- */
   function open(env) {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('ardoise-' + env, 1);
+      const r = indexedDB.open('ardoise-' + env, 2);
       r.onupgradeneeded = () => {
         const db = r.result;
         if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('attente')) db.createObjectStore('attente', { keyPath: 'id' });
+        // meta : de quoi permettre au service worker de vérifier seul l'abonnement aux notifications (jeton, adresse de l'API, clé, horaires)
+        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'k' });
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
@@ -51,6 +53,30 @@
   }
   function putMany(db, s, liste) {
     return req(db, s, 'readwrite', st => { liste.forEach(o => st.put(o)); });
+  }
+
+  const getMeta = (db, k) => req(db, 'meta', 'readonly', st => st.get(k));
+  const cleBytes = b64 => { const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b64.length % 4) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); };
+
+  /* Vérifie l'abonnement push et le répare si besoin (abonnement effacé par n8n, ou adresse différente).
+     Utilisé par l'app (à l'ouverture) et par le service worker (contrôle périodique, changement d'abonnement). */
+  async function verifierAbonnement(reg, m, source) {
+    if (!m || !m.jeton || !m.api) return 'sans-jeton';
+    const appel = async body => {
+      const r = await fetch(m.api, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-ardoise-jeton': m.jeton }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.erreur || 'serveur');
+      return j;
+    };
+    const info = await appel({ action: 'cle' });
+    let s = await reg.pushManager.getSubscription();
+    if (s && !info.abonne) { await s.unsubscribe().catch(() => {}); s = null; }
+    if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
+    if (!info.abonne || info.fin !== s.endpoint.slice(-16)) {
+      await appel({ action: 'abonner', abonnement: s.toJSON(), horaires: m.horaires, source });
+      return 'repare';
+    }
+    return 'ok';
   }
 
   /* Report : une note non faite d'un jour passé passe à aujourd'hui (« Reportée ×N »). */
@@ -90,5 +116,5 @@
     return { titre, corps: liste(l), nombre: l.length };
   }
 
-  G.ArdoiseStore = { MORDER, MOMENTS, TYPES, envDe, key, fromKey, addDays, today, heureFr, open, all, put, del, remplacer, putMany, reporter, trier, recap };
+  G.ArdoiseStore = { getMeta, verifierAbonnement, cleBytes, MORDER, MOMENTS, TYPES, envDe, key, fromKey, addDays, today, heureFr, open, all, put, del, remplacer, putMany, reporter, trier, recap };
 })(self);
