@@ -90,6 +90,8 @@ function render() {
 
   let h = '';
   if (!R.jeton) h += `<div class="notice"><span>Saisis ton jeton pour activer la dictée et l'analyse.</span><button data-go="jeton">Réglages</button></div>`;
+  else if (R.notifs && pushOk() && Notification.permission !== 'granted')
+    h += `<div class="notice"><span>Le téléphone a coupé les notifications de L'Ardoise : plus de récap.</span><button data-go="notif">Réactiver</button></div>`;
   else if (N.length && Date.now() - (R.sauvegarde || R.premierUsage) > 30 * 86400000 && Date.now() > (R.repousseSauvegarde || 0))
     h += `<div class="notice"><span>Tes notes ne sont que sur ce téléphone : pense à exporter une sauvegarde.</span><button data-go="exp">Exporter</button><button data-go="snooze">Plus tard</button></div>`;
   h += `<div class="sec-head"><h2>Aujourd'hui</h2><span class="d">${nice(jour)}</span><span class="sp"></span>${lateCount ? `<span class="late-dot" title="Reportées">${lateCount}</span>` : ''}<span class="count">${todo}</span></div>`;
@@ -244,6 +246,7 @@ $('#list').addEventListener('click', e => {
   const go = e.target.closest('[data-go]');
   if (go) {
     if (go.dataset.go === 'exp') exporter();
+    else if (go.dataset.go === 'notif') activerNotifs().then(() => { toast('Notifications réactivées'); render(); }).catch(err => toast(err.message || 'Impossible de réactiver'));
     else if (go.dataset.go === 'snooze') { R.repousseSauvegarde = Date.now() + 7 * 86400000; saveR(); render(); }
     else openSettings();
     return;
@@ -618,7 +621,20 @@ async function activerNotifs() {
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBytes(info.cle) });
   if (R.matin === undefined && info.horaires) { R.matin = info.horaires.matin; R.soir = info.horaires.soir; }
   await api({ action: 'abonner', abonnement: sub.toJSON(), horaires: horaires(), source: 'activation' });
-  R.notifs = true; saveR(); memoriserMeta(); dernierControle = 0; setTimeout(() => rafraichirAbonnement(true), 1500);
+  R.notifs = true; R.notifsDepuis = Date.now(); saveR(); memoriserMeta(); dernierControle = 0; setTimeout(() => rafraichirAbonnement(true), 1500);
+}
+/* Diagnostic : si les notifications ont été coupées par le téléphone, on le signale à n8n (alerte Telegram),
+   au plus une fois toutes les 6 h, pour comprendre la cause. */
+async function diagNotifs() {
+  if (!R.notifs || !R.jeton || !pushOk() || !navigator.onLine) return;
+  const sub = await abonnement().catch(() => null);
+  const perm = Notification.permission;
+  if (perm === 'granted' && sub) return;
+  if (Date.now() - (R.dernierDiag || 0) < 6 * 3600000) return;
+  R.dernierDiag = Date.now(); saveR();
+  const h = R.notifsDepuis ? Math.round((Date.now() - R.notifsDepuis) / 3600000) + ' h' : 'inconnu';
+  api({ action: 'diag', etat: { version: VERSION, environnement: ENV, permission: perm, abonnement_local: sub ? 'présent' : 'absent',
+    app_installee: matchMedia('(display-mode: standalone)').matches ? 'oui' : 'non', activees_depuis: h } }).catch(() => {});
 }
 /* Ce que le service worker doit connaître pour réparer seul l'abonnement (même appareil, même environnement). */
 async function memoriserMeta() {
@@ -819,4 +835,5 @@ themeApply();
   }
   setTimeout(traiterAttente, 800);
   setTimeout(() => rafraichirAbonnement(true), 3000);
+  setTimeout(diagNotifs, 2000);
 })();
